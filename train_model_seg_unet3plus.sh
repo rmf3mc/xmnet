@@ -63,9 +63,6 @@ case $ARG in
     $BASE_CMD --mmanet              --seg_ild --freeze_all --dataparallel $DATA_DIR      --backbone_class  $model  $Base_model   --att_from 8  $Training_MC
     ;;
 
-12)
-    $BASE_CMD --mmanet              --seg_ild --freeze_all --dataparallel $DATA_DIR      --backbone_class  $model  $Base_model   --att_from 8  $Training_MC
-    ;;
 
 # The following commands are commented out as they contain the --fsds argument
 # 2)
