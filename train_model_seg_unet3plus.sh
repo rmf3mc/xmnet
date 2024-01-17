@@ -33,7 +33,7 @@ echo "Where training: $local_train"
 
 
 # Define the base command
-BASE_CMD="python -u Train.py"
+BASE_CMD="python -u Train.py --max_epoch 200"
 
 
 # Run the command based on the argument
