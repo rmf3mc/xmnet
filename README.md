@@ -1,8 +1,6 @@
 # XMNet: XGBoost with Multitasking Network for Classification and Segmentation of Ultra-Fine-Grained Datasets
 
-This repository contains the PyTorch implementation for the paper **"XMNet: XGBoost with Multitasking Network for
-Classification and Segmentation of
-Ultra-Fine-Grained Datasets"**.
+This repository contains the PyTorch implementation for the paper **"XMNet: XGBoost with Multitasking Network for Classification and Segmentation of Ultra-Fine-Grained Datasets"**.
 
 
 ---
