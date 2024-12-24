@@ -15,7 +15,7 @@ Classification and segmentation using ultra-fine-grained datasets can be challen
 ### Prerequisites
 To ensure a consistent development and runtime environment, we recommend using the provided `Dockerfile`. Build and run the Docker container as follows:
 ```bash
-docker build -t mnsa .
+docker build -t xmnet .
 ```
 
 ### Data Preparation
@@ -30,7 +30,7 @@ Place your dataset in the `./data` directory before running the training scripts
 ### Step 1: Train the Classification Head
 To train the classification head, use the following command:
 ```bash
-python -u Train.py --mmanet --cls_ild --dataparallel --data_dir ./data --backbone_class 'densenet161'
+python -u Train.py --xmnet    --cls_included   --backbone_class  $model --dataset soybean_2_1
 ```
 
 For additional training options and configurations, please refer to the `train_model_cls.sh` script.
@@ -38,7 +38,7 @@ For additional training options and configurations, please refer to the `train_m
 ### Step 2: Train the Segmentation Head
 Once the classification head is trained, train the segmentation head using the following command:
 ```bash
-python -u Train.py --mmanet --seg_ild --freeze_all --dataparallel --data_dir ./data --backbone_class 'densenet161' --model_path best_model.pth --unet --transfer_to 0.250
+python -u Train.py --xmnet --seg_ild --freeze_all --dataparallel --data_dir ./data --backbone_class 'densenet161' --model_path best_model.pth --unet --transfer_to 0.250
 ```
 
 For more segmentation training options and configurations, refer to the `train_model_seg.sh` script.

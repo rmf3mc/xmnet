@@ -1,8 +1,6 @@
-import torch.nn as nn
 import torchvision.models as models
 
-from torchvision.models import DenseNet161_Weights
-
+from torchvision.models import DenseNet161_Weights, DenseNet121_Weights , ResNet50_Weights, ResNet34_Weights, ResNet18_Weights,VGG19_Weights, MobileNet_V2_Weights, MobileNet_V3_Large_Weights
 
 import torch
 import torch.nn as nn
@@ -13,79 +11,91 @@ from torch.nn import TripletMarginLoss
 import torchvision
 import torchvision.transforms as transforms
 
-
-
-
+from unet3 import *
+from utils import *
 
 class XMNET(nn.Module):
-    def __init__ (self, backbone_name, num_classes,MMANet=True,XMNet=False,mask_guided=True,seg_included=None,freeze_all=False,Unet=True):
-
-
+    def __init__ (self, backbone_name, num_classes,MANet=False,XMNET=True,mask_guided=False,seg_included=None,freeze_all=False,no_sig_classes=1,Unet=True,meanfrom=3):
         super(XMNET, self).__init__()
-        self.MMANet=MMANet
-        self.XMNet=XMNet
+        
+        self.MANet=MANet
+        self.XMNET=XMNET
         self.backbone_name=backbone_name
         self.mask_guided=mask_guided
         
         self.Unet=Unet
         self.seg_included= seg_included 
-        
+        self.no_classes=no_sig_classes
+        self.freeze_all=freeze_all
+
+        self.meanfrom=meanfrom
         
         print('self.seg_included:',self.seg_included)
         
         
-        if backbone_name=='densenet161':          
-            self.features=Densenet161Encoder(backbone_name, num_classes)         
+        if backbone_name[:-3]=='densenet':          
+            self.features=DensenetEncoder(backbone_name, num_classes)         
             self.classifier=self.features.classifier
             self.attention=nn.Conv2d(2,1,kernel_size=1, bias=False)
-            
-            if freeze_all:
-                self._freeze_layers(self.features.features)
-                
-                for param in self.features.parameters():
-                    param.requires_grad = False
-                
-                for param in self.attention.parameters():
-                    param.requires_grad = False
-                    
-                for param in self.classifier.parameters():
-                    param.requires_grad = False
-                
-                
-                
+            if self.freeze_all:
+                self._freeze_layers(self.features.features)                
             else:
-                self._freeze_layers(self.features.features,upto=9)
-                
+                self._freeze_layers(self.features.features,upto=9)        
             
-            
-            
-            if self.seg_included:
-            
-                  
-                print('**********************************')
-                
-                
-                self.Encoders=self.set_encoder_layers(self.features.features)               
-                        
-                no_outputs_ch=[ self.get_no_output(self.Encoders[str(i)]) if i<6 and i >1 else  self.find_latest_batchnorm(self.Encoders[str(i-1)])  for i in range(2,7)]   
-                print(no_outputs_ch)
-                
-                
-                
-                shape=no_outputs_ch[-1]
-    
-                self.center=nn.Conv2d(shape, shape, kernel_size=3, padding=1).to('cuda')
+     
+        elif backbone_name[:-2]=='resnet':
+            self.features=ResNetEncoder(backbone_name, num_classes)         
+            self.classifier=self.features.classifier
+            self.attention=nn.Conv2d(2,1,kernel_size=1, bias=False)
+            if self.freeze_all:
+                self._freeze_layers(self.features.features)                
+            else:
+                self._freeze_layers(self.features.features,upto=7)
+            self.features.features=nn.Sequential(*list(self.features.features.children())[:-2])
 
-                self.decoder_layers=nn.ModuleDict()
-                
-                if self.Unet:
-                    for i in range(1,6):
-                        self.decoder_layers[str(i)]=UNetDecoderLayerModule(lvl=i,no_channels=no_outputs_ch,no_classes=1)
-                else:
-                    for i in range(1,6):
-                        self.decoder_layers[str(i)]=UNet3PlusDecoderLayerModule(lvl=i,no_channels=no_outputs_ch,no_classes=1)
-     
-     
+
+        else:
+            self.features=MobileNet(backbone_name,num_classes)
+            self.classifier=self.features.classifier
+            self.attention=nn.Conv2d(2,1,kernel_size=1, bias=False)
+            if self.freeze_all:
+                self._freeze_layers(self.features.features)                
+            else:
+                self._freeze_layers(self.features.features,upto=11)
+
+
+
+
+        if self.seg_included:
+        
+              
+            print('**********************************')
+            
+            print(len(self.features.features))
+            self.Encoders, encoder_mils,no_outputs_ch =set_encoder_layers(self.features.features)                
+            
+            
+            
+            shape=no_outputs_ch[-1]
+
+            self.center=nn.Conv2d(shape, shape, kernel_size=3, padding=1).to('cuda')
+
+            self.decoder_layers=nn.ModuleDict()
+            
+            if self.Unet:
+                for i in range(1,6):
+                    self.decoder_layers[str(i)]=UNetDecoderLayerModule(lvl=i,no_channels=no_outputs_ch,no_classes=self.no_classes)
+            else:
+                for i in range(1,6):
+                    self.decoder_layers[str(i)]=UNet3PlusDecoderLayerModule(lvl=i,no_channels=no_outputs_ch,no_classes=self.no_classes)
+
+
+            self.atten_layers= nn.ModuleDict()
+            for i in range(1,6):
+                self.atten_layers[str(i)]=nn.Conv2d(2,1,kernel_size=1, bias=False)
+
+
+   
             
     def _freeze_layers(self, model, upto=False):
         cnt, th = 0, 0
@@ -102,39 +112,51 @@ class XMNET(nn.Module):
                     params.requires_grad = False
                     print(name, name2, cnt,params.requires_grad)            
         
-            
+        if self.freeze_all:
+            for param in self.features.parameters():
+                param.requires_grad = False
+            for param in self.attention.parameters():
+                param.requires_grad = False
+            for param in self.classifier.parameters():
+                param.requires_grad = False    
         
 
-    def getAttFeats(self,att_map,features,type=None):
+    def getAttFeats(self,att_map,features):
         features=0.5*features+0.5*(att_map*features)
         return features
     
         
         
-        
+    
     def forward(self,x,mask=None):
 
-        if self.backbone_name[:6]=='resnet':
-            features=self.features(x)
-        
-
-        elif self.backbone_name=='densenet161':
-            features=self.features(x)
+        features=self.features(x)
             
-        
-        #foreground attention
         outputs={}
         
-        if self.MMANet:
+        if self.MANet:
             fg_att=torch.mean(features,dim=1).unsqueeze(1)   
             fg_att=torch.sigmoid(fg_att)  
             features=self.getAttFeats(fg_att,features)
         
-        elif self.XMNet:
+        elif self.XMNET:
             fg_att=self.attention(torch.cat((torch.mean(features,dim=1).unsqueeze(1),torch.max(features,dim=1)[0].unsqueeze(1)),dim=1))
             fg_att=torch.sigmoid(fg_att)
             features=self.getAttFeats(fg_att,features)
+
+        
+
+
+        if self.backbone_name[:-3]=='densenet':
+            features = F.relu(features, inplace=True)
+    
+
+        out = F.adaptive_avg_pool2d(features, (1, 1))
+        out = torch.flatten(out, 1)
+        get_that=out
+        out = self.classifier(out)
             
+        outputs['out']=out    
             
             
         if self.mask_guided:    
@@ -152,82 +174,96 @@ class XMNET(nn.Module):
             outputs['mask']=mask
             outputs['fg_att']=fg_att
             
-        
-
-
-        
-        if self.backbone_name=='densenet161':
-            features = F.relu(features, inplace=True)
-        
-
-        out = F.adaptive_avg_pool2d(features, (1, 1))
-        out = torch.flatten(out, 1)
-        
-        outputs['features'] = torch.flatten(out, 1)
-        
-        out = self.classifier(out)
-            
-        outputs['out']=out
-        
-
             
         if self.seg_included:
-            Encoder_outputs = self.get_encoder_ops(x)
+            Encoder_outputs = self.get_encoder_ops(x,self.meanfrom)
             Encoder_5=Encoder_outputs[4]
             Conv_Encoder_5=self.center(Encoder_5)
-            Final_seg=get_segmentation(self.decoder_layers,Encoder_outputs,Conv_Encoder_5)
-            outputs['Final_seg']=Final_seg
+            outputs['Final_seg'], outputs['decoder_layer_2'], outputs['decoder_layer_3'], outputs['decoder_layer_4'], outputs['decoder_layer_5']=get_segmentation(self.decoder_layers,Encoder_outputs,Conv_Encoder_5)
+            outputs['decoder_layer_2'], outputs['decoder_layer_3'], outputs['decoder_layer_4'], outputs['decoder_layer_5'] = torch.mean(outputs['decoder_layer_2'] ,dim=1).unsqueeze(1), torch.mean(outputs['decoder_layer_3'] ,dim=1).unsqueeze(1), torch.mean(outputs['decoder_layer_4'] ,dim=1).unsqueeze(1), torch.mean(outputs['decoder_layer_5'] ,dim=1).unsqueeze(1)
             
             
-        return outputs
+        return outputs,get_that
 
 
-    def get_encoder_ops(self,x):
+    def get_encoder_ops(self,x,meanfrom=3):
         Encoder_outputs=[]
 
-        for i in range(1,5):
-            x = self.Encoders[str(i)](x)
-            Encoder_outputs.append(x)
+        for i in range(1,6):
+            if i<meanfrom:
+                x = self.Encoders[str(i)](x)
+                Encoder_outputs.append(x)
             
-        x = self.Encoders[str(5)](x)
+            else:
+                x = self.Encoders[str(i)](x)
 
-        mean_att=torch.mean(x,dim=1).unsqueeze(1)
-        mean_att=torch.sigmoid(mean_att)  
-        features=self.getAttFeats(mean_att,x)
-        Encoder_outputs.append(features)
+                fg_att=self.atten_layers[str(i)](torch.cat((torch.mean(x,dim=1).unsqueeze(1),torch.max(x,dim=1)[0].unsqueeze(1)),dim=1))
+                fg_att=torch.sigmoid(fg_att)
+                features=self.getAttFeats(fg_att,x)
+
+                # mean_att=torch.mean(x,dim=1).unsqueeze(1)
+                # mean_att=torch.sigmoid(mean_att)  
+                # features=self.getAttFeats(mean_att,x)
+                
+                Encoder_outputs.append(features)
+            
+            #print(f'layer{i}output',x.shape)
+
 
         return Encoder_outputs
-                
-
-    def set_encoder_layers(self,model):
-        layers=nn.ModuleDict()
-        for i in range(1,6):
-            if i==1:
-                layers[str(i)]=model[:3]
-
-            elif i>1 and i<5:
-                layers[str(i)]=model[(i-1)*2+1:(i-1)*2+3]
-
-            else:
-                layers[str(i)]=model[(i-1)*2+1:]
-        return layers
 
 
-
-
-class Densenet161Encoder(nn.Module):
+class DensenetEncoder(nn.Module):
     def __init__(self, backbone_name, num_classes):
-        super(Densenet161Encoder, self).__init__()
-        self.features=getattr(models, backbone_name)(weights=DenseNet161_Weights.DEFAULT).features
-        #self.features=getattr(models, backbone_name)(pretrained=True).features
-        
+        super(DensenetEncoder, self).__init__()
+        if backbone_name=='densenet161':
+            self.features=getattr(models, backbone_name)(weights=DenseNet161_Weights.DEFAULT).features    
+        elif backbone_name=='densenet121':
+            self.features=getattr(models, backbone_name)(weights=DenseNet121_Weights.DEFAULT).features
+        print('last',self.features[-1].num_features)
         self.classifier=nn.Linear(self.features[-1].num_features, num_classes)
                 
     def forward(self, x):
         features = self.features(x)
         return features
     
-
-
     
     
+
+class ResNetEncoder(nn.Module):
+    def __init__(self, backbone_name, num_classes):
+        super(ResNetEncoder, self).__init__()
+        if backbone_name[-2:]=='50':
+            self.features = getattr(models, backbone_name)(weights=ResNet50_Weights.DEFAULT)
+            encoder_mils,no_features=get_model_specs(nn.Sequential(*list(self.features.children())[:-2]))
+        elif backbone_name[-2:]=='34':
+            self.features = getattr(models, backbone_name)(weights=ResNet34_Weights.DEFAULT)
+            encoder_mils,no_features=get_model_specs(nn.Sequential(*list(self.features.children())[:-2]))
+        elif backbone_name[-2:]=='18':
+            self.features = getattr(models, backbone_name)(weights=ResNet18_Weights.DEFAULT)
+            encoder_mils,no_features=get_model_specs(nn.Sequential(*list(self.features.children())[:-2]))
+        
+        print('last',no_features[-1])
+        self.classifier = nn.Linear(no_features[-1], num_classes)
+    def forward(self, x):
+        features = self.features(x)
+        return features
+    
+    
+class MobileNet(nn.Module):
+    def __init__(self, backbone_name, num_classes):
+        super(MobileNet, self).__init__()
+        if backbone_name[11]=='2':
+            self.features=getattr(models,backbone_name)(weights=MobileNet_V2_Weights.DEFAULT).features
+            encoder_mils,no_features=get_model_specs(self.features)
+        elif backbone_name[11]=='3':
+            self.features=getattr(models,backbone_name)(weights=MobileNet_V3_Large_Weights.DEFAULT).features
+            encoder_mils,no_features=get_model_specs(self.features)
+        print('last',no_features[-1])
+        self.classifier=nn.Sequential(
+                    nn.Dropout(0.2),
+                    nn.Linear(no_features[-1], num_classes))
+
+    def forward(self, x):
+        features = self.features(x)
+        return features
